@@ -1,0 +1,18 @@
+[Unit]
+Description=ipad-usb-webcam - iOS Camera to Linux Webcam Bridge
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vickr
+WorkingDirectory=/home/vickr/ipad-usb-webcam
+ExecStartPre=/usr/bin/sudo /usr/sbin/modprobe v4l2loopback video_nr=10 card_label=ipad-usb-webcam-HD exclusive_caps=1 max_width=1920 max_height=1080
+ExecStart=/home/vickr/ipad-usb-webcam/.venv/bin/python /home/vickr/ipad-usb-webcam/server/ipad_usb_server.py
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

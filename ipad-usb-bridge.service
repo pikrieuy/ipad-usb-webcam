@@ -1,0 +1,19 @@
+[Unit]
+Description=ipad-usb-webcam Pro USB Bridge (IUCM/TetherCam over usbmuxd)
+After=usbmuxd.service ipad-usb-webcam.service
+Wants=usbmuxd.service
+
+[Service]
+Type=simple
+User=vickr
+Group=video
+# PipeWire/PulseAudio session env (bridge renders to the ipad_usb_mic null-sink)
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=PULSE_SERVER=unix:/run/user/1000/pulse/native
+WorkingDirectory=/home/vickr/ipad-usb-webcam
+ExecStart=/home/vickr/ipad-usb-webcam/.venv/bin/python /home/vickr/ipad-usb-webcam/usb/ipad_usb_bridge.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

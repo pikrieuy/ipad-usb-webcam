@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>ipad-usb-webcam</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { height: 100%; overflow: hidden; background: #0B0D10; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+    .glass {
+      background: rgba(255,255,255,0.06);
+      backdrop-filter: blur(24px) saturate(140%);
+      -webkit-backdrop-filter: blur(24px) saturate(140%);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .rec-dot { animation: rec 1.4s ease-in-out infinite; }
+    @keyframes rec { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+    .shutter:active { transform: scale(0.92); }
+    .shutter { transition: transform 0.15s cubic-bezier(.2,.8,.2,1); }
+    .stats-bar {
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+    #previewCanvas { display: none; }
+    .fade-in { animation: fadeIn 0.5s ease-out; }
+    @keyframes fadeIn { from { opacity:0; transform: translateY(8px);} to { opacity:1; transform:none;} }
+  </style>
+</head>
+<body class="flex flex-col text-white">
+
+  <!-- Top bar -->
+  <header class="flex items-center justify-between px-5 py-3 glass">
+    <div class="flex items-center gap-2.5">
+      <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-amber-300 to-orange-500 flex items-center justify-center shadow-lg shadow-orange-500/20">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+          <circle cx="12" cy="13" r="3"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-sm font-bold tracking-tight">ipad-usb-webcam</h1>
+        <p class="text-[11px] text-white/50 leading-none mt-0.5">iOS → Linux Webcam Bridge</p>
+      </div>
+    </div>
+    <div id="connBadge" class="text-[11px] px-2.5 py-1 rounded-full bg-white/5 text-white/50 stats-bar">
+      ○ Idle
+    </div>
+  </header>
+
+  <!-- Camera preview -->
+  <main class="flex-1 relative overflow-hidden bg-black">
+    <video id="videoEl" class="absolute inset-0 w-full h-full object-cover" playsinline muted autoplay></video>
+    <canvas id="previewCanvas"></canvas>
+
+    <!-- Overlay -->
+    <div class="absolute inset-0 pointer-events-none">
+      <!-- Resolution tag (tap to cycle 1080p -> 720p -> 480p). pointer-events-auto
+           because the parent overlay is pointer-events-none. -->
+      <button id="btnRes" class="absolute top-3 left-3 glass rounded-lg px-2.5 py-1.5 stats-bar text-[10px] text-white/70 active:scale-95 transition pointer-events-auto">
+        <span id="resLabel">1280×720</span> · <span id="fpsLabel">30fps</span>
+      </button>
+
+      <!-- REC indicator -->
+      <div id="recIndicator" class="hidden absolute top-3 right-3 glass rounded-lg px-2.5 py-1.5 flex items-center gap-1.5 stats-bar text-[11px]">
+        <span class="w-2 h-2 rounded-full bg-red-500 rec-dot"></span>
+        <span>STREAMING</span>
+      </div>
+
+      <!-- Empty state -->
+      <div id="emptyState" class="absolute inset-0 flex items-center justify-center">
+        <div class="text-center fade-in px-6">
+          <div class="w-16 h-16 mx-auto mb-4 rounded-2xl glass flex items-center justify-center">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-white/40">
+              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+              <circle cx="12" cy="13" r="3"/>
+            </svg>
+          </div>
+          <p class="text-sm text-white/70 font-medium">Kamera siap dipakai</p>
+          <p class="text-xs text-white/40 mt-1 leading-relaxed">
+            Tap tombol di bawah untuk mulai<br>streaming ke laptop Linux.
+          </p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Bottom controls -->
+  <footer class="glass px-6 py-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+    <div class="flex items-center justify-center mb-4">
+      <!-- Mic toggle pill -->
+      <button id="btnMic" class="flex items-center gap-2 px-3.5 py-2 rounded-full glass active:scale-95 transition text-[12px] font-medium text-white/60" disabled>
+        <svg id="micIcon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+        </svg>
+        <span id="micLabel">Mic</span>
+      </button>
+    </div>
+
+    <div class="flex items-center justify-between max-w-md mx-auto">
+      <!-- Switch camera -->
+      <button id="btnFlip" class="w-11 h-11 rounded-full glass flex items-center justify-center active:scale-90 transition disabled:opacity-30" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/>
+          <path d="M21 3v5h-5"/>
+          <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/>
+          <path d="M3 21v-5h5"/>
+        </svg>
+      </button>
+
+      <!-- Shutter -->
+      <button id="btnShutter" class="shutter w-[72px] h-[72px] rounded-full bg-white shadow-2xl shadow-white/20 flex items-center justify-center disabled:opacity-50">
+        <span id="shutterInner" class="w-[60px] h-[60px] rounded-full bg-red-500 ring-2 ring-red-300/40 flex items-center justify-center transition-colors">
+          <svg id="shutterIcon" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="6 3 20 12 6 21 6 3" fill="white" stroke="none"/>
+          </svg>
+        </span>
+      </button>
+
+      <!-- Stats -->
+      <button id="btnStats" class="w-11 h-11 rounded-full glass flex items-center justify-center active:scale-90 transition">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 3v18h18"/>
+          <path d="M18 17V9"/>
+          <path d="M13 17V5"/>
+          <path d="M8 17v-3"/>
+        </svg>
+      </button>
+    </div>
+
+    <!-- Stats panel -->
+    <div id="statsPanel" class="hidden mt-4 glass rounded-xl p-3 stats-bar text-[11px] text-white/70 fade-in max-w-md mx-auto">
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div>
+          <p class="text-white/40 text-[10px] uppercase tracking-wider">Frames</p>
+          <p id="statFrames" class="text-white text-sm font-semibold mt-0.5">0</p>
+        </div>
+        <div>
+          <p class="text-white/40 text-[10px] uppercase tracking-wider">Sent</p>
+          <p id="statSent" class="text-white text-sm font-semibold mt-0.5">0 KB</p>
+        </div>
+        <div>
+          <p class="text-white/40 text-[10px] uppercase tracking-wider">Real FPS</p>
+          <p id="statFps" class="text-white text-sm font-semibold mt-0.5">0</p>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const WS_URL = wsProto + '//' + location.host + '/ws';
+
+    const videoEl = document.getElementById('videoEl');
+    const canvas = document.getElementById('previewCanvas');
+    const ctx = canvas.getContext('2d');
+    const btnShutter = document.getElementById('btnShutter');
+    const btnFlip = document.getElementById('btnFlip');
+    const btnStats = document.getElementById('btnStats');
+    const statsPanel = document.getElementById('statsPanel');
+    const emptyState = document.getElementById('emptyState');
+    const recIndicator = document.getElementById('recIndicator');
+    const connBadge = document.getElementById('connBadge');
+    const shutterIcon = document.getElementById('shutterIcon');
+    const shutterInner = document.getElementById('shutterInner');
+    const btnMic = document.getElementById('btnMic');
+    const micIcon = document.getElementById('micIcon');
+    const micLabel = document.getElementById('micLabel');
+    const btnRes = document.getElementById('btnRes');
+
+    let stream = null;
+    let ws = null;
+    let streaming = false;
+    let facingMode = 'user';
+    let captureInterval = null;
+    let frameCount = 0;
+    let bytesSent = 0;
+    let fpsCounter = 0;
+    let lastFpsTime = performance.now();
+    let realFps = 0;
+
+    // Mic state
+    let micEnabled = false;
+    let audioCtx = null;
+    let micSource = null;
+    let micNode = null;
+    let micStream = null;
+
+    // Capture resolution + JPEG quality. Persisted to localStorage so the
+    // choice sticks. Default 720p: the iPad-side JPEG encode is the main
+    // latency source (40-90ms at 1080p, ~15-30ms at 720p, ~8-15ms at 480p),
+    // so 720p roughly halves end-to-end delay vs 1080p. Tap the res tag to
+    // cycle (1080p sharper, 480p lightest).
+    let TARGET_W = parseInt(localStorage.getItem('aura_w') || '1280', 10);
+    let TARGET_H = parseInt(localStorage.getItem('aura_h') || '720', 10);
+    const TARGET_FPS = 30;
+    let JPEG_QUALITY = parseFloat(localStorage.getItem('aura_q') || '0.85');
+    document.getElementById('resLabel').textContent = TARGET_W + '×' + TARGET_H;
+
+    // AudioWorklet processor source: downmixes input to mono, converts
+    // Float32 samples [-1,1] to signed 16-bit LE PCM, posts the buffer out.
+    const WORKLET_SRC = `
+      class MicProcessor extends AudioWorkletProcessor {
+        constructor() { super(); this.buf = []; this.len = 0; this.TARGET = 4800; }
+        process(inputs) {
+          const ch = inputs[0];
+          if (!ch || !ch.length) return true;
+          let mixed = new Float32Array(ch[0].length);
+          for (let c = 0; c < ch.length; c++) {
+            const data = ch[c];
+            for (let i = 0; i < data.length; i++) mixed[i] += data[i] / ch.length;
+          }
+          const pcm = new Int16Array(mixed.length);
+          for (let i = 0; i < mixed.length; i++) {
+            const s = Math.max(-1, Math.min(1, mixed[i]));
+            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          this.port.postMessage(pcm.buffer, [pcm.buffer]);
+          return true;
+        }
+      }
+      registerProcessor('mic-processor', MicProcessor);
+    `;
+
+    function setBadge(text, cls) {
+      connBadge.textContent = text;
+      connBadge.className = 'text-[11px] px-2.5 py-1 rounded-full ' + cls;
+    }
+
+    async function startCamera() {
+      try {
+        const constraints = {
+          video: {
+            facingMode: facingMode,
+            width: { ideal: TARGET_W },
+            height: { ideal: TARGET_H },
+            frameRate: { ideal: TARGET_FPS }
+          },
+          audio: false
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        videoEl.srcObject = stream;
+        await videoEl.play();
+        btnFlip.disabled = false;
+        return true;
+      } catch (err) {
+        alert('Gagal akses kamera: ' + err.message + '\n\nPastikan Safari punya izin kamera di Settings.');
+        return false;
+      }
+    }
+
+    function connectWs() {
+      return new Promise((resolve) => {
+        ws = new WebSocket(WS_URL);
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ cmd: 'start' }));
+          resolve(true);
+        };
+        ws.onerror = () => resolve(false);
+        ws.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data.ok === false && data.err) {
+              alert('Server: ' + data.err);
+            }
+          } catch (_) {}
+        };
+        ws.onclose = () => {
+          if (streaming) stopStreaming();
+        };
+      });
+    }
+
+    // Frame-sending flag: only one frame in flight at a time. If the previous
+    // frame is still being encoded/sent, we SKIP capturing a new one instead
+    // of queueing (queueing = latency buildup). This is the single biggest
+    // latency fix — it keeps the pipeline "current" rather than backlogged.
+    let sending = false;
+
+    function sendFrame() {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !streaming) return;
+      if (sending) return; // drop this tick; a frame is already in flight
+      const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+      if (!vw || !vh) return;
+
+      // Letterbox fit into TARGET_W x TARGET_H
+      const scale = Math.min(TARGET_W / vw, TARGET_H / vh);
+      const dw = Math.round(vw * scale);
+      const dh = Math.round(vh * scale);
+      const ox = Math.floor((TARGET_W - dw) / 2);
+      const oy = Math.floor((TARGET_H - dh) / 2);
+
+      canvas.width = TARGET_W;
+      canvas.height = TARGET_H;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, TARGET_W, TARGET_H);
+      ctx.drawImage(videoEl, ox, oy, dw, dh);
+
+      // toBlob gives raw JPEG bytes directly (no base64 round-trip). The
+      // `sending` flag above ensures we never stack up pending frames — the
+      // next capture is skipped until this one is handed to the socket.
+      sending = true;
+      canvas.toBlob((blob) => {
+        sending = false;
+        if (!blob) return;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(blob);
+          frameCount++;
+          bytesSent += blob.size;
+          fpsCounter++;
+        }
+      }, 'image/jpeg', JPEG_QUALITY);
+    }
+
+    // Capture loop via requestVideoFrameCallback (rVFC, iOS Safari 15.4+):
+    // fires the MOMENT a new frame arrives from the camera, so we always
+    // encode the freshest frame (minimal added latency) and never burn CPU
+    // re-encoding an unchanged frame like a 60Hz rAF loop does. Falls back
+    // to rAF on browsers without rVFC.
+    let lastFrameTime = 0;
+    function captureLoopRVFC() {
+      if (!streaming) return;
+      sendFrame();
+      videoEl.requestVideoFrameCallback(captureLoopRVFC);
+    }
+    function captureLoopRAF(ts) {
+      if (!streaming) return;
+      if (ts - lastFrameTime >= 1000 / TARGET_FPS) {
+        lastFrameTime = ts;
+        sendFrame();
+      }
+      captureInterval = requestAnimationFrame(captureLoopRAF);
+    }
+    function startCaptureLoop() {
+      lastFrameTime = 0;
+      if (videoEl.requestVideoFrameCallback) {
+        videoEl.requestVideoFrameCallback(captureLoopRVFC);
+      } else {
+        captureInterval = requestAnimationFrame(captureLoopRAF);
+      }
+    }
+
+    function updateStats() {
+      const now = performance.now();
+      if (now - lastFpsTime >= 1000) {
+        realFps = Math.round(fpsCounter * 1000 / (now - lastFpsTime));
+        fpsCounter = 0;
+        lastFpsTime = now;
+      }
+      document.getElementById('statFrames').textContent = frameCount.toLocaleString();
+      document.getElementById('statSent').textContent = (bytesSent / 1024).toFixed(0) + ' KB';
+      document.getElementById('statFps').textContent = realFps;
+    }
+
+    async function startStreaming() {
+      const ok = await startCamera();
+      if (!ok) return;
+      emptyState.classList.add('hidden');
+      btnShutter.disabled = true;
+
+      setBadge('◌ Connecting…', 'text-[11px] px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-300 stats-bar');
+      const connected = await connectWs();
+      if (!connected) {
+        setBadge('✕ Gagal', 'text-[11px] px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 stats-bar');
+        btnShutter.disabled = false;
+        return;
+      }
+
+      streaming = true;
+      frameCount = 0; bytesSent = 0;
+      // Start the freshest-frame capture loop (rVFC; rAF fallback on older
+      // browsers).
+      startCaptureLoop();
+      setInterval(updateStats, 500);
+
+      recIndicator.classList.remove('hidden');
+      shutterIcon.innerHTML = '<rect x="6" y="6" width="12" height="12" rx="1" fill="white" stroke="none"/>';
+      shutterInner.className = 'w-[60px] h-[60px] rounded-full bg-white/20 ring-2 ring-white/40 flex items-center justify-center transition-colors';
+      setBadge('● Live · ' + TARGET_W + '×' + TARGET_H, 'text-[11px] px-2.5 py-1 rounded-full bg-green-500/10 text-green-400 stats-bar');
+      btnShutter.disabled = false;
+      btnMic.disabled = false;
+      setMicUI(false);
+    }
+
+    function stopStreaming() {
+      streaming = false;
+      if (captureInterval) { cancelAnimationFrame(captureInterval); captureInterval = null; }
+      stopMic();
+      if (ws) { try { ws.send(JSON.stringify({ cmd: 'stop' })); ws.close(); } catch(_) {} ws = null; }
+      if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+      videoEl.srcObject = null;
+      recIndicator.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+      shutterIcon.innerHTML = '<polygon points="6 3 20 12 6 21 6 3" fill="white" stroke="none"/>';
+      shutterInner.className = 'w-[60px] h-[60px] rounded-full bg-red-500 ring-2 ring-red-300/40 flex items-center justify-center transition-colors';
+      setBadge('○ Idle', 'text-[11px] px-2.5 py-1 rounded-full bg-white/5 text-white/50 stats-bar');
+      btnMic.disabled = true;
+    }
+
+    btnShutter.addEventListener('click', () => {
+      if (streaming) stopStreaming();
+      else startStreaming();
+    });
+
+    btnFlip.addEventListener('click', async () => {
+      if (streaming) return;
+      facingMode = facingMode === 'user' ? 'environment' : 'user';
+      await startCamera();
+    });
+
+    btnStats.addEventListener('click', () => {
+      statsPanel.classList.toggle('hidden');
+    });
+
+    // ---- Resolution cycling --------------------------------------------
+    // Tap the resolution tag to cycle presets. Lower res = faster JPEG encode
+    // on the iPad = lower latency (good when 1080p feels laggy).
+    const RES_PRESETS = [
+      { w: 1920, h: 1080, q: 0.85 },
+      { w: 1280, h: 720,  q: 0.82 },
+      { w: 854,  h: 480,  q: 0.78 },
+    ];
+    function currentResIndex() {
+      return RES_PRESETS.findIndex(p => p.w === TARGET_W && p.h === TARGET_H);
+    }
+    async function cycleResolution() {
+      const next = (currentResIndex() + 1) % RES_PRESETS.length;
+      const p = RES_PRESETS[next];
+      TARGET_W = p.w; TARGET_H = p.h; JPEG_QUALITY = p.q;
+      localStorage.setItem('aura_w', String(TARGET_W));
+      localStorage.setItem('aura_h', String(TARGET_H));
+      localStorage.setItem('aura_q', String(JPEG_QUALITY));
+      document.getElementById('resLabel').textContent = TARGET_W + '×' + TARGET_H;
+      setBadge('↻ ' + TARGET_W + '×' + TARGET_H, 'text-[11px] px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-300 stats-bar');
+      // Restart camera with the new resolution (works whether idle or live).
+      if (stream) { stream.getTracks().forEach(t => t.stop()); }
+      await startCamera();
+    }
+    btnRes.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!streaming) cycleResolution();
+    });
+
+    // ---- Microphone capture -------------------------------------------
+    async function startMic() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        // Grab mic separately from the camera stream so toggling it doesn't
+        // disturb the active video track.
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true }
+        });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+          sampleRate: 48000
+        });
+        await audioCtx.audioWorklet.addModule(
+          URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'application/javascript' }))
+        );
+        micSource = audioCtx.createMediaStreamSource(micStream);
+        micNode = new AudioWorkletNode(audioCtx, 'mic-processor');
+        micNode.port.onmessage = (e) => {
+          const pcm = e.data; // ArrayBuffer of Int16 LE mono samples
+          if (ws && ws.readyState === WebSocket.OPEN && micEnabled) {
+            // Prefix with the 4-byte audio marker the server expects.
+            const frame = new Uint8Array(4 + pcm.byteLength);
+            frame[0] = 0x01; frame[1] = 0; frame[2] = 0; frame[3] = 0;
+            frame.set(new Uint8Array(pcm), 4);
+            ws.send(frame);
+          }
+        };
+        micSource.connect(micNode);
+        micNode.connect(audioCtx.destination); // keep node alive (muted path ok)
+        await audioCtx.resume();
+        // Tell the server to spin up the audio pipeline.
+        ws.send(JSON.stringify({ cmd: 'audio_start' }));
+        micEnabled = true;
+        setMicUI(true);
+      } catch (err) {
+        alert('Gagal akses mic: ' + err.message);
+        stopMic();
+      }
+    }
+
+    function stopMic() {
+      micEnabled = false;
+      try { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ cmd: 'audio_stop' })); } catch(_) {}
+      if (micNode) { try { micNode.disconnect(); } catch(_) {} micNode = null; }
+      if (micSource) { try { micSource.disconnect(); } catch(_) {} micSource = null; }
+      if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+      if (audioCtx) { try { audioCtx.close(); } catch(_) {} audioCtx = null; }
+      setMicUI(false);
+    }
+
+    function setMicUI(on) {
+      btnMic.className = 'flex items-center gap-2 px-3.5 py-2 rounded-full active:scale-95 transition text-[12px] font-medium ' +
+        (on ? 'bg-red-500/20 border border-red-400/40 text-red-300'
+            : 'glass text-white/60');
+      micLabel.textContent = on ? 'Mic Live' : 'Mic';
+      micIcon.style.color = on ? '#fca5a5' : 'currentColor';
+    }
+
+    btnMic.addEventListener('click', () => {
+      if (!streaming) return;
+      if (micEnabled) stopMic();
+      else startMic();
+    });
+  </script>
+</body>
+</html>
